@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AegisVuln | Intelligent Vulnerability Assessment & Risk Analysis</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="shield-icon">🛡️</span>
+      <div>
+        <h1>AEGIS<span class="accent">VULN</span></h1>
+        <p class="subtitle">Intelligent Vulnerability Assessment &amp; Automated Risk Analysis Platform</p>
+      </div>
+    </div>
+    <div class="status-pills">
+      <span class="pill pill-safe">Authorized Scope Enforcement: ACTIVE</span>
+      <span class="pill {{ 'pill-ok' if nessus_configured else 'pill-muted' }}">
+        Nessus API: {{ 'CONNECTED' if nessus_configured else 'OPTIONAL / XML READY' }}
+      </span>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="card control-panel">
+      <div class="card-header">
+        <h2>Target Assessment Console</h2>
+        <span class="badge-info">Non-Destructive Enumeration Only</span>
+      </div>
+
+      <form id="scanForm" class="scan-grid">
+        <div class="form-group">
+          <label for="targetInput">Target IPv4 / Localhost</label>
+          <div class="input-row">
+            <input type="text" id="targetInput" value="127.0.0.1" placeholder="e.g., 127.0.0.1 or 192.168.1.10" required />
+            <button type="button" id="validateBtn" class="btn btn-secondary">Validate Scope</button>
+          </div>
+          <small id="validationFeedback" class="feedback-text"></small>
+        </div>
+
+        <div class="form-group">
+          <label for="scanMode">Assessment Profile</label>
+          <select id="scanMode">
+            <option value="demo" selected>Localhost Safe Demo Mode (Recommended Lab)</option>
+            <option value="quick">Nmap Quick Service Scan (Top 100 Ports)</option>
+            <option value="standard">Nmap Standard Banner Scan (Top 300 Ports)</option>
+            <option value="deep">Nmap Deep Service &amp; OS Fingerprinting</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label for="assetCriticality">Business Asset Criticality</label>
+          <select id="assetCriticality">
+            <option value="Low">Low (Dev / Sandbox)</option>
+            <option value="Medium">Medium (Internal Workstation)</option>
+            <option value="High" selected>High (Production App Server)</option>
+            <option value="Mission-Critical">Mission-Critical (Core DB / Auth)</option>
+          </select>
+        </div>
+
+        <div class="form-group checkbox-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="authConfirm" checked required />
+            <span>I confirm explicit written authorization to scan this target system.</span>
+          </label>
+          <label class="checkbox-label">
+            <input type="checkbox" id="liveNvdToggle" checked />
+            <span>Query live NIST NVD API v2.0 (with local cache fallback)</span>
+          </label>
+        </div>
+
+        <div class="form-actions">
+          <button type="submit" id="startScanBtn" class="btn btn-primary">▶ Initiate Vulnerability Scan</button>
+          <label class="btn btn-secondary file-upload-btn">
+            ⬆ Import .nessus XML
+            <input type="file" id="nessusFileInput" accept=".nessus,.xml" hidden />
+          </label>
+        </div>
+      </form>
+
+      <div id="progressContainer" class="progress-wrapper hidden">
+        <div class="progress-meta">
+          <span id="progressStatusText">Initializing scan...</span>
+          <span id="progressPercentText">0%</span>
+        </div>
+        <div class="progress-bar-bg">
+          <div id="progressBarFill" class="progress-bar-fill" style="width: 0%;"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="kpi-grid">
+      <div class="card kpi-card">
+        <span class="kpi-label">Overall Risk Score</span>
+        <div class="kpi-value" id="kpiRiskScore">0.0</div>
+        <span class="kpi-sub" id="kpiRiskGrade">No Scan Selected</span>
+      </div>
+      <div class="card kpi-card">
+        <span class="kpi-label">Open Attack Surface</span>
+        <div class="kpi-value" id="kpiOpenPorts">0</div>
+        <span class="kpi-sub" id="kpiHighExposure">0 High-Exposure Services</span>
+      </div>
+      <div class="card kpi-card">
+        <span class="kpi-label">Confirmed CVEs</span>
+        <div class="kpi-value text-critical" id="kpiConfirmedCves">0</div>
+        <span class="kpi-sub">Verified Software Version Matches</span>
+      </div>
+      <div class="card kpi-card">
+        <span class="kpi-label">Potential Security Risks</span>
+        <div class="kpi-value text-high" id="kpiPotentialRisks">0</div>
+        <span class="kpi-sub">Exposure &amp; Config Hardening Gaps</span>
+      </div>
+    </section>
+
+    <section class="analytics-grid">
+      <div class="card">
+        <div class="card-header">
+          <h3>Severity Distribution</h3>
+          <button id="downloadPdfBtn" class="btn btn-accent" disabled>⬇ Download Executive PDF Report</button>
+        </div>
+        <div class="chart-box">
+          <canvas id="severityChart"></canvas>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h3>Target Fingerprinting &amp; Attack Surface</h3>
+        </div>
+        <div class="host-meta-list" id="hostMetadataBox">
+          <p><strong>Target IP:</strong> <span id="metaTarget">-</span></p>
+          <p><strong>Operating System:</strong> <span id="metaOs">-</span></p>
+          <p><strong>Scan Profile:</strong> <span id="metaMode">-</span></p>
+          <p><strong>Criticality Tier:</strong> <span id="metaCriticality">-</span></p>
+          <p><strong>High-Exposure Listeners:</strong> <span id="metaExposedServices">-</span></p>
+        </div>
+        <h4>Discovered Open Ports</h4>
+        <div class="table-scroll mini-table">
+          <table>
+            <thead>
+              <tr>
+                <th>Port</th>
+                <th>Service</th>
+                <th>Product &amp; Version</th>
+                <th>Exposure</th>
+              </tr>
+            </thead>
+            <tbody id="portsTableBody">
+              <tr><td colspan="4" class="empty-cell">Run or select a scan to inspect ports.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-header">
+        <h2>Prioritized Vulnerability &amp; Risk Register</h2>
+        <div class="filter-bar">
+          <input type="text" id="vulnSearchInput" placeholder="Search CVE, service, port, title..." />
+          <select id="severityFilter">
+            <option value="ALL">All Severities</option>
+            <option value="Critical">Critical</option>
+            <option value="High">High</option>
+            <option value="Medium">Medium</option>
+            <option value="Low">Low</option>
+            <option value="Informational">Informational</option>
+          </select>
+          <select id="typeFilter">
+            <option value="ALL">All Finding Types</option>
+            <option value="Confirmed CVE">Confirmed CVE Only</option>
+            <option value="Potential Security Risk">Potential Security Risk Only</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Rank</th>
+              <th>Severity</th>
+              <th>Priority</th>
+              <th>Type</th>
+              <th>CVE ID</th>
+              <th>Port / Service</th>
+              <th>Finding Title</th>
+              <th>CVSS</th>
+              <th>Details</th>
+            </tr>
+          </thead>
+          <tbody id="vulnTableBody">
+            <tr><td colspan="9" class="empty-cell">No findings loaded yet.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="bottom-grid">
+      <div class="card">
+        <div class="card-header">
+          <h3>Historical Scan Tracking</h3>
+        </div>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Target</th>
+                <th>Mode</th>
+                <th>Risk</th>
+                <th>Findings</th>
+                <th>Timestamp</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="historyTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h3>Scan Comparison (Drift &amp; Remediation Tracker)</h3>
+        </div>
+        <div class="compare-controls">
+          <select id="baselineScanSelect"></select>
+          <span>vs.</span>
+          <select id="currentScanSelect"></select>
+          <button id="compareBtn" class="btn btn-secondary">Compare Scans</button>
+        </div>
+        <div id="comparisonResultBox" class="comparison-box">
+          <p class="empty-cell">Select two scans to identify newly discovered and resolved vulnerabilities.</p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>
